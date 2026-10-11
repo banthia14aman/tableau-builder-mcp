@@ -1,0 +1,385 @@
+{
+ "workbook": {
+  "name": "Feature Matrix",
+  "base_dir": "~/tableau-builder",
+  "output_dir": "examples/out"
+ },
+ "data": [
+  {
+   "id": "sales",
+   "csv": "examples/data/sales.csv",
+   "fields": {
+    "State": {
+     "geo": "state"
+    },
+    "Sales": {
+     "format": "$#,##0"
+    },
+    "Profit": {
+     "format": "$#,##0"
+    },
+    "Category": {
+     "colors": {
+      "Furniture": "#2a78d6",
+      "Technology": "#eb6834",
+      "Office Supplies": "#1baf7a"
+     }
+    }
+   },
+   "country": "United States"
+  }
+ ],
+ "params": [
+  {
+   "name": "Top N",
+   "type": "integer",
+   "value": 5,
+   "range": {
+    "min": 3,
+    "max": 10,
+    "step": 1
+   }
+  },
+  {
+   "name": "Profit Target",
+   "type": "real",
+   "value": 0.12,
+   "range": {
+    "min": 0,
+    "max": 0.3,
+    "step": 0.01
+   },
+   "format": "0%"
+  },
+  {
+   "name": "Pick Segment",
+   "type": "string",
+   "value": "Consumer",
+   "list": [
+    "Consumer",
+    "Corporate",
+    "Home Office"
+   ]
+  }
+ ],
+ "calcs": [
+  {
+   "name": "Profit Ratio",
+   "formula": "SUM([Profit]) / SUM([Sales])",
+   "format": "0.0%"
+  },
+  {
+   "name": "Above Target",
+   "formula": "[Profit Ratio] >= [Profit Target]"
+  },
+  {
+   "name": "Customer Lifetime",
+   "formula": "{FIXED [State] : SUM([Sales])}"
+  },
+  {
+   "name": "Running Sales",
+   "formula": "RUNNING_SUM(SUM([Sales]))"
+  },
+  {
+   "name": "Is Picked Segment",
+   "formula": "[Segment] = [Pick Segment]"
+  },
+  {
+   "name": "Order Size",
+   "formula": "IF [Quantity] >= 6 THEN \"Large\" ELSE \"Small\" END"
+  }
+ ],
+ "sheets": [
+  {
+   "name": "KPI Sales",
+   "mark": "text",
+   "label": "SUM(Sales)",
+   "title": "Total sales",
+   "title_size": 11
+  },
+  {
+   "name": "KPI Ratio",
+   "mark": "text",
+   "label": "Profit Ratio",
+   "title": "Profit ratio",
+   "title_size": 11
+  },
+  {
+   "name": "Sales Trend",
+   "mark": "line",
+   "cols": [
+    "TMONTH(Order Date)"
+   ],
+   "rows": [
+    "SUM(Sales)"
+   ],
+   "color": "Category",
+   "title": "Monthly sales",
+   "subtitle": "by category",
+   "axes": {
+    "SUM(Sales)": {
+     "title": "Sales ($)"
+    }
+   }
+  },
+  {
+   "name": "Top States",
+   "mark": "bar",
+   "rows": [
+    "State"
+   ],
+   "cols": [
+    "SUM(Sales)"
+   ],
+   "label": "SUM(Sales)",
+   "mark_color": "#2a78d6",
+   "filters": [
+    {
+     "field": "State",
+     "top": 8,
+     "by": "SUM(Sales)"
+    }
+   ],
+   "sort": [
+    {
+     "field": "State",
+     "by": "SUM(Sales)"
+    }
+   ],
+   "header_width": {
+    "State": 110
+   },
+   "hide_field_labels": [
+    "rows"
+   ],
+   "title": "Top 8 states by sales"
+  },
+  {
+   "name": "Region Mix",
+   "mark": "pie",
+   "color": "Region",
+   "angle": "SUM(Sales)",
+   "label": "Region",
+   "title": "Sales by region"
+  },
+  {
+   "name": "Sales Map",
+   "mark": "filled_map",
+   "detail": [
+    "State"
+   ],
+   "color": "SUM(Profit)",
+   "palette": "tableau-orange-blue-diverging",
+   "tooltip": [
+    "SUM(Sales)",
+    "Profit Ratio"
+   ],
+   "title": "Profit by state"
+  },
+  {
+   "name": "Category Detail",
+   "mark": "bar",
+   "rows": [
+    "Category",
+    "Sub-Category"
+   ],
+   "cols": [
+    "SUM(Sales)"
+   ],
+   "color": "Category",
+   "filters": [
+    {
+     "field": "Segment",
+     "values": [
+      "Consumer",
+      "Corporate"
+     ]
+    },
+    {
+     "field": "Region",
+     "values": [
+      "South"
+     ],
+     "exclude": true
+    },
+    {
+     "field": "SUM(Sales)",
+     "min": 1000
+    }
+   ],
+   "title": "Sales by sub-category"
+  },
+  {
+   "name": "Profit Scatter",
+   "mark": "circle",
+   "cols": [
+    "SUM(Sales)"
+   ],
+   "rows": [
+    "SUM(Profit)"
+   ],
+   "detail": [
+    "State"
+   ],
+   "color": "Above Target",
+   "size": "SUM(Quantity)",
+   "opacity": 0.8,
+   "axes": {
+    "SUM(Sales)": {
+     "scale": "log"
+    }
+   },
+   "title": "Sales vs profit by state"
+  },
+  {
+   "name": "Running Total",
+   "mark": "area",
+   "cols": [
+    "TMONTH(Order Date)"
+   ],
+   "rows": [
+    "Running Sales"
+   ],
+   "title": "Running sales",
+   "filters": [
+    {
+     "field": "YEAR(Order Date)",
+     "values": [
+      2025
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Segment Table",
+   "mark": "text",
+   "rows": [
+    "Segment"
+   ],
+   "cols": [
+    "YEAR(Order Date)"
+   ],
+   "label": "SUM(Sales)",
+   "title": "Sales by segment and year"
+  },
+  {
+   "name": "Order Sizes",
+   "mark": "bar",
+   "cols": [
+    "Order Size"
+   ],
+   "rows": [
+    "COUNT(Sales)"
+   ],
+   "color": "Is Picked Segment",
+   "title": "Orders by size"
+  }
+ ],
+ "dashboards": [
+  {
+   "name": "Overview",
+   "title": "Feature matrix: overview",
+   "layout": {
+    "col": [
+     {
+      "row": [
+       "KPI Sales",
+       "KPI Ratio",
+       {
+        "text": "Text zone: everything below is generated",
+        "font_size": 12,
+        "color": "#52514e"
+       },
+       {
+        "param": "Profit Target",
+        "mode": "slider",
+        "size": 220
+       }
+      ],
+      "size": 100
+     },
+     {
+      "row": [
+       {
+        "sheet": "Sales Trend",
+        "weight": 2
+       },
+       {
+        "col": [
+         {
+          "legend": "color",
+          "sheet": "Sales Trend",
+          "size": 120
+         },
+         {
+          "filter": "Category",
+          "sheet": "Sales Trend",
+          "mode": "checkdropdown",
+          "size": 90
+         },
+         {
+          "blank": true
+         }
+        ],
+        "size": 170
+       }
+      ]
+     },
+     {
+      "row": [
+       "Top States",
+       "Region Mix",
+       "Sales Map"
+      ]
+     }
+    ]
+   },
+   "actions": [
+    {
+     "type": "filter",
+     "source": "Top States",
+     "targets": [
+      "Sales Trend"
+     ]
+    },
+    {
+     "type": "highlight",
+     "source": "Region Mix",
+     "on": "hover"
+    }
+   ]
+  },
+  {
+   "name": "Details",
+   "title": "Feature matrix: details",
+   "size": "auto",
+   "layout": {
+    "col": [
+     {
+      "row": [
+       "Category Detail",
+       "Profit Scatter",
+       {
+        "legend": "size",
+        "sheet": "Profit Scatter",
+        "size": 120
+       }
+      ]
+     },
+     {
+      "row": [
+       "Running Total",
+       "Segment Table",
+       "Order Sizes",
+       {
+        "param": "Pick Segment",
+        "mode": "list",
+        "size": 160
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

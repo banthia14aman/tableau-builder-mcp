@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+# generated workbooks / extracts
+out/
+examples/out/
+*.hyper
+*.twbx
+*.twb
+# local research: contains Tableau-owned sample workbooks and schemas - do not publish
+research/
+# private example with local data paths
+examples/flow_of_money.json
