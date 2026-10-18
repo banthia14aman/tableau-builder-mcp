@@ -11,3 +11,5 @@ examples/out/
 research/
 # private example with local data paths
 examples/flow_of_money.json
+agensi_listing.json
+agensi/*_listing.json

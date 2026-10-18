@@ -9,30 +9,27 @@
 - Multi-dashboard layouts from a row/column tree, filter and highlight actions, sheets hidden from the tab bar
 - An escape hatch for everything else: `patch_workbook` (raw XML edits) and `diff_workbooks` (learn any feature by changing it once in Tableau's UI)
 
-## Quick start (let your agent do it)
+## Get it
 
-Paste this into Claude Code:
+Tableau Builder MCP is a **paid product on [Agensi](https://agensi.io)** (search "Tableau Builder MCP"). The companion **tableau-dashboard** skill is free there.
 
-> Set up https://github.com/banthia14aman/tableau-builder-mcp for me
+After purchase, your agent writes the package to `~/tableau-builder` and runs `install.sh`. The installer:
+1. checks macOS, uv and Tableau Public;
+2. runs the self-test;
+3. registers the MCP server;
+4. installs the skill.
 
-The agent reads [`CLAUDE.md`](CLAUDE.md), clones the repo and runs `./install.sh`. The installer checks the prerequisites, runs the self-test, registers the MCP server and installs the `tableau-dashboard` skill. Restart Claude Code, then ask:
+Restart Claude Code, then ask:
 
 > Build a Tableau dashboard from ~/Downloads/sales.csv that shows where profit comes from
 
-### Manual setup
-```bash
-git clone https://github.com/banthia14aman/tableau-builder-mcp ~/tableau-builder
-cd ~/tableau-builder && ./install.sh
-```
-
 **Requirements:**
 - macOS with [Tableau Public](https://public.tableau.com) (free) for opening and validating. Building `.twbx` files works on any OS.
-- [uv](https://docs.astral.sh/uv/). The installer installs it if it's missing.
-- Python 3.10+.
+- Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
-**Dependencies:** `mcp` (<2) and `tableauhyperapi`, both resolved automatically by `uv run --script server.py`.
+**Dependencies:** `mcp` (<2) and `tableauhyperapi`, both resolved automatically.
 
-Other MCP clients can run the server with: `uv run --quiet --script /path/to/server.py` (stdio).
+Other MCP clients can run the server with: `uv run --quiet --script ~/tableau-builder/server.py` (stdio).
 
 ## Tools
 
@@ -104,4 +101,4 @@ Live load-testing uses `open_in_tableau` (needs Tableau Public).
 ## Credits
 The Hyper extract, packaging and ID helpers are adapted from [tableau-public-authoring](https://github.com/andyyaro/tableau-public-authoring-mcp) (MIT, Andy Yaro). Its generator bugs (caption references, aggregate derivations, missing viewpoints, …) are fixed here. Not affiliated with Tableau or Salesforce. Tableau is a trademark of Salesforce, Inc.
 
-MIT licensed. See [LICENSE](LICENSE).
+Commercial licence: see [LICENSE](LICENSE). Versions published on GitHub before 2026-10-18 were MIT.

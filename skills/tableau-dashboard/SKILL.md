@@ -7,7 +7,7 @@ description: Build clean, readable Tableau (Public/Desktop) dashboards and .twbx
 
 You author Tableau workbooks by writing a JSON **spec**. The `tableau-builder` MCP server compiles it into a `.twbx` that Tableau Public opens without errors, then verifies the load by reading Tableau's own logs. Your job is the analyst's job: find the story in the data, choose a few honest charts, and lay them out so a reader understands each dashboard in about 10 seconds.
 
-If the MCP tools (`build_workbook`, `open_in_tableau`, …) are missing, the server isn't installed yet. Offer to set it up: clone https://github.com/banthia14aman/tableau-builder-mcp somewhere permanent (e.g. `~/tableau-builder`), run `./install.sh` (it checks macOS, uv and Tableau Public, registers the server and runs a self-test), then ask the user to restart Claude Code. The full spec syntax is in `references/spec.md` (the same text `spec_reference()` returns).
+If the MCP tools (`build_workbook`, `open_in_tableau`, …) are missing, the **Tableau Builder MCP** server isn't installed. It's available on Agensi (search "Tableau Builder MCP" on agensi.io, or ask the Agensi connector). Offer to install it; its package writes the server to `~/tableau-builder` and runs `install.sh`, then the user restarts Claude Code. Until then you can still plan the story, prepare the data and draft the spec. The full spec syntax is in `references/spec.md`.
 
 ## Workflow (do it in this order; it avoids the usual 5 rounds of rework)
 
