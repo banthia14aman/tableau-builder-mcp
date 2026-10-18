@@ -1,5 +1,7 @@
 # tableau-builder
 
+> **Commercial, source-available software.** Get a licence and a one-click install on Agensi: **[Tableau Builder MCP: $7.99](https://agensi.io/skills/tableau-builder-mcp)**. The companion [tableau-dashboard skill](https://agensi.io/skills/tableau-dashboard-builder) is free. The source here is published for transparency and review; see [LICENSE](LICENSE).
+
 **Let an AI agent build real Tableau dashboards.** tableau-builder is an MCP server plus a Claude Code skill. It turns a compact JSON spec into a Tableau workbook (`.twbx`, Hyper extracts packaged, ready for Tableau Public), opens it in Tableau, and **verifies the load by reading Tableau's own logs**. The agent knows the workbook works before you ever see it.
 
 - KPI tiles, bars, lines, areas, scatter/bubbles, pies, filled maps, text tables
@@ -11,7 +13,7 @@
 
 ## Get it
 
-Tableau Builder MCP is a **paid product on [Agensi](https://agensi.io)** (search "Tableau Builder MCP"). The companion **tableau-dashboard** skill is free there.
+Tableau Builder MCP is a **paid product on [Agensi](https://agensi.io)** ([https://agensi.io/skills/tableau-builder-mcp](https://agensi.io/skills/tableau-builder-mcp)). The companion **tableau-dashboard** skill is free there.
 
 After purchase, your agent writes the package to `~/tableau-builder` and runs `install.sh`. The installer:
 1. checks macOS, uv and Tableau Public;

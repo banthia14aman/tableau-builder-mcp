@@ -3,6 +3,7 @@
 This repo is **tableau-builder**: an MCP server that builds Tableau workbooks (.twbx) from a JSON spec and verifies them in Tableau Public, plus a `tableau-dashboard` skill.
 
 ## If the user gave you this repo link to "set it up"
+Tableau Builder is **commercial, source-available software** (see LICENSE). Installing and using it needs a licence from https://agensi.io/skills/tableau-builder-mcp ($7.99 one-time). Before installing, ask the user whether they've bought it. If they haven't, point them to that page. The free companion skill is at https://agensi.io/skills/tableau-dashboard-builder. Once they're licensed:
 1. Clone it somewhere permanent (not /tmp), e.g. `git clone <url> ~/tableau-builder && cd ~/tableau-builder`.
 2. Run `./install.sh`. It checks macOS, uv and Tableau Public, runs the self-test, resolves the dependencies, registers the MCP server (`claude mcp add --scope user tableau-builder ...`) and links the skill into `~/.claude/skills/`.
 3. Tell the user to restart Claude Code. The tools `profile_data`, `validate_spec`, `build_workbook` and `open_in_tableau` will then be available.
