@@ -7,7 +7,7 @@ description: Build clean, readable Tableau (Public/Desktop) dashboards and .twbx
 
 You author Tableau workbooks by writing a JSON **spec**. The `tableau-builder` MCP server compiles it into a `.twbx` that Tableau Public opens without errors, then verifies the load by reading Tableau's own logs. Your job is the analyst's job: find the story in the data, choose a few honest charts, and lay them out so a reader understands each dashboard in about 10 seconds.
 
-If the MCP tools (`build_workbook`, `open_in_tableau`, …) are missing, the server isn't installed. Run `./install.sh` from the tableau-builder repo (see its README), then restart Claude Code.
+If the MCP tools (`build_workbook`, `open_in_tableau`, …) are missing, the server isn't installed yet. Offer to set it up: clone https://github.com/banthia14aman/tableau-builder-mcp somewhere permanent (e.g. `~/tableau-builder`), run `./install.sh` (it checks macOS, uv and Tableau Public, registers the server and runs a self-test), then ask the user to restart Claude Code. The full spec syntax is in `references/spec.md` (the same text `spec_reference()` returns).
 
 ## Workflow (do it in this order; it avoids the usual 5 rounds of rework)
 
@@ -20,7 +20,7 @@ If the MCP tools (`build_workbook`, `open_in_tableau`, …) are missing, the ser
    - small summary tables, for example one row per category, or a 1-row KPI table
    Name columns the way you want axis titles to read, units included, e.g. `AUM (Rs lakh cr)`. Pre-computing beats clever calcs: the workbook stays fast and obviously correct.
 4. **Write the story first, as text.** For each dashboard, write its one-sentence takeaway and which 2–4 charts prove it. Pick each chart with `references/chart-guide.md`. Split the story into 2–3 dashboards (tabs) rather than one crowded wall.
-5. **Write the spec.** Call `spec_reference()` once per session for the exact syntax. Start from the patterns below.
+5. **Write the spec.** Call `spec_reference()` once per session (or read `references/spec.md`) for the exact syntax. Start from the patterns below.
 6. **Check, then build.** Run `validate_spec(spec)` and fix any errors (they say "did you mean …"). Then `build_workbook(spec)`.
 7. **Verify in Tableau.** `open_in_tableau(twbx)` must return `ok: true`.
    - A `dialogs` entry means Tableau rejected the XML.
