@@ -1,6 +1,6 @@
 # tableau-builder
 
-> **Commercial, source-available software.** Get a licence and a one-click install on Agensi: **[Tableau Builder MCP: $7.99](https://agensi.io/skills/tableau-builder-mcp)**. The companion [tableau-dashboard skill](https://agensi.io/skills/tableau-dashboard-builder) is free. The source here is published for transparency and review; see [LICENSE](LICENSE).
+> **Free for students and personal use.** Clone this repo and run `install.sh`: coursework, case competitions, research and hobby projects are all covered ([LICENSE](LICENSE): PolyForm Noncommercial 1.0.0 plus a student grant). **Commercial use** (at work, for paid client work, or in a product) needs a licence: **[Tableau Builder MCP on Agensi: $7.99](https://agensi.io/skills/tableau-builder-mcp)**, which also gives a one-click install. The companion [tableau-dashboard skill](https://agensi.io/skills/tableau-dashboard-builder) is free.
 
 **Let an AI agent build real Tableau dashboards.** tableau-builder is an MCP server plus a Claude Code skill. It turns a compact JSON spec into a Tableau workbook (`.twbx`, Hyper extracts packaged, ready for Tableau Public), opens it in Tableau, and **verifies the load by reading Tableau's own logs**. The agent knows the workbook works before you ever see it.
 
@@ -13,9 +13,14 @@
 
 ## Get it
 
-Tableau Builder MCP is a **paid product on [Agensi](https://agensi.io)** ([https://agensi.io/skills/tableau-builder-mcp](https://agensi.io/skills/tableau-builder-mcp)). The companion **tableau-dashboard** skill is free there.
+**Students and personal use (free):** paste this repo's link into Claude Code and ask it to set it up, or run it yourself:
+```bash
+git clone https://github.com/banthia14aman/tableau-builder-mcp ~/tableau-builder && ~/tableau-builder/install.sh
+```
 
-After purchase, your agent writes the package to `~/tableau-builder` and runs `install.sh`. The installer:
+**Commercial use:** buy the licence on [Agensi](https://agensi.io/skills/tableau-builder-mcp) ($7.99 one-time). Your agent then writes the package to `~/tableau-builder` and runs `install.sh`.
+
+The installer:
 1. checks macOS, uv and Tableau Public;
 2. runs the self-test;
 3. registers the MCP server;
@@ -103,4 +108,4 @@ Live load-testing uses `open_in_tableau` (needs Tableau Public).
 ## Credits
 The Hyper extract, packaging and ID helpers are adapted from [tableau-public-authoring](https://github.com/andyyaro/tableau-public-authoring-mcp) (MIT, Andy Yaro). Its generator bugs (caption references, aggregate derivations, missing viewpoints, …) are fixed here. Not affiliated with Tableau or Salesforce. Tableau is a trademark of Salesforce, Inc.
 
-Commercial licence: see [LICENSE](LICENSE). Versions published on GitHub before 2026-10-18 were MIT.
+Licence: free for students and noncommercial use under the PolyForm Noncommercial License 1.0.0 plus a student grant; commercial licences on [Agensi](https://agensi.io/skills/tableau-builder-mcp). See [LICENSE](LICENSE). Versions published on GitHub before 2026-10-18 were MIT.
