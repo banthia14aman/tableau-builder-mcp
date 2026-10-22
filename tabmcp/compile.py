@@ -9,7 +9,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .data import REMOTE_TYPE, bracket
+from .data import REMOTE_TYPE, bracket, member
 from .model import AGG_NAMES, Field, Param, Pill, SpecError, Workbook, tableau_format
 
 E = ET.SubElement
@@ -166,7 +166,7 @@ class Compiler:
         d = E(dss, "datasource", caption=ds.id, inline="true", name=ds.name, version="18.1")
         con = E(d, "connection", {"class": "federated"})
         nc = E(E(con, "named-connections"), "named-connection", caption=ds.id, name=ds.conn)
-        E(nc, "connection", {"class": "textscan", "directory": f"Data/{ds.id}", "filename": ds.csv.name,
+        E(nc, "connection", {"class": "textscan", "directory": member("Data", ds.id), "filename": ds.csv.name,
                               "password": "", "server": "", "workgroup-auth-mode": "as-is"})
         rel = E(con, "relation", connection=ds.conn, name=ds.csv.name, table=f"[{ds.csv.stem}#csv]", type="table")
         cols = E(rel, "columns", {"character-set": "UTF-8", "header": "yes", "locale": "en_US", "separator": ","})
@@ -188,7 +188,7 @@ class Compiler:
               pivot="key", type="nominal")
         ex = E(d, "extract", count="-1", enabled="true", units="records")
         hc = E(ex, "connection", {"access_mode": "readonly", "author-locale": "en_US", "class": "hyper",
-                                  "dbname": f"Data/{ds.id}/{ds.id}.hyper", "default-settings": "hyper",
+                                  "dbname": member("Data", ds.id, f"{ds.id}.hyper"), "default-settings": "hyper",
                                   "schema": "Extract", "sslmode": "", "tablename": "Extract", "update-time": ""})
         E(hc, "relation", name="Extract", table="[Extract].[Extract]", type="table")
         mr2 = E(hc, "metadata-records")

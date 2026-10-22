@@ -1,0 +1,3 @@
+# Shell scripts keep LF on every checkout. With CRLF (Git for Windows' default core.autocrlf=true) bash fails
+# on the first line, before install.sh can print its "use install.ps1 on Windows" hint.
+*.sh text eol=lf

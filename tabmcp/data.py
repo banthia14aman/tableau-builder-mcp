@@ -12,10 +12,11 @@ import csv
 import datetime as dt
 import hashlib
 import re
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath
 
 # ---------------------------------------------------------------- ids / names
 _ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -314,19 +315,35 @@ def build_hyper(csv_path: Path, cols: list[Column], out_path: Path) -> dict:
 _FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
 
-def _safe_arc(name: str) -> str:
-    if name.startswith("/") or ".." in Path(name).parts or "\\" in name:
+def member(*parts: str) -> str:
+    """A path inside the .twbx, as written into the workbook XML (connection directory, hyper dbname) and
+    used as the zip member name: always '/'-separated, never os.sep, so a workbook built on Windows is the
+    same as one built on macOS."""
+    return PurePosixPath(*parts).as_posix()
+
+
+def _safe_arc(name: str | PurePath) -> str:
+    """Zip member name. The zip format requires '/' separators (APPNOTE 4.4.17) and Tableau looks members up
+    as Data/<id>/<file>. A PurePath (PureWindowsPath included) is converted with as_posix(); on Windows a
+    backslash in a string is a separator too. Elsewhere a backslash is a legal filename character, so it is
+    rejected rather than guessed at. Absolute paths, drive letters and '..' are rejected everywhere."""
+    if isinstance(name, PurePath):
+        name = name.as_posix()
+    if sys.platform == "win32":
+        name = name.replace("\\", "/")
+    if name.startswith("/") or ".." in PurePosixPath(name).parts or "\\" in name or re.match(r"[A-Za-z]:", name):
         raise ValueError(f"unsafe archive path: {name}")
     return name
 
 
-def package_twbx(twbx_path: Path, twb_name: str, twb_bytes: bytes, payloads: list[tuple[str, Path]]) -> list[str]:
+def package_twbx(twbx_path: Path, twb_name: str, twb_bytes: bytes, payloads: list[tuple[str | PurePath, Path]]) -> list[str]:
     """Zip: one root .twb + data files at their relative archive paths (Data/<id>/...)."""
     entries = []
     tmp = twbx_path.with_suffix(".twbx.tmp")
     with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for arc, data in [(twb_name, twb_bytes)] + [(a, p.read_bytes()) for a, p in payloads]:
-            info = zipfile.ZipInfo(_safe_arc(arc), date_time=_FIXED_DATE)
+            arc = _safe_arc(arc)
+            info = zipfile.ZipInfo(arc, date_time=_FIXED_DATE)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             zf.writestr(info, data)

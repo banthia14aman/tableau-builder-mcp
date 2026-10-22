@@ -6,6 +6,13 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
 
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)   # Git Bash / MSYS2 / Cygwin on Windows: paths, symlinks and python3 differ here
+    warn "Windows shell detected. On Windows use the PowerShell installer (EXPERIMENTAL) instead:"
+    echo "   powershell -ExecutionPolicy Bypass -File \"$(cygpath -m "$DIR/install.ps1" 2>/dev/null || echo "$DIR/install.ps1")\""   # C:/... works in bash and PowerShell
+    exit 1 ;;
+esac
+
 say "1/5 Checking prerequisites"
 [[ "$(uname)" == "Darwin" ]] || warn "Not macOS: building workbooks works, but open_in_tableau (live validation) needs macOS + Tableau Public."
 if ! command -v uv >/dev/null 2>&1; then

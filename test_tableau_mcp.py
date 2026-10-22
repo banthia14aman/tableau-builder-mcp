@@ -2,16 +2,31 @@
 
 Covers the parsers (pills, formulas, formats, shelves) and compiles a spec touching every feature,
 then checks the cross-references Tableau's loader requires. Live load-testing is open_in_tableau.
+The Windows layer (EXPERIMENTAL) is checked by simulation: sys.platform / IS_WIN, subprocess, ctypes,
+environment variables and Program Files trees are faked, so these checks run on macOS.
 """
+import ast
+import contextlib
 import csv
+import ctypes
+import importlib
+import os
 import random
 import re
+import subprocess
 import sys
 import tempfile
+import time
+import types
 import xml.etree.ElementTree as ET
-from pathlib import Path
+import zipfile
+from pathlib import Path, PureWindowsPath
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from tabmcp import data as D  # noqa: E402
+from tabmcp import tools as T  # noqa: E402
+from tabmcp import validate as V  # noqa: E402
 from tabmcp.compile import Compiler  # noqa: E402
 from tabmcp.data import _kind  # noqa: E402
 from tabmcp.model import SpecError, Workbook, is_aggregate_formula, tableau_format  # noqa: E402
@@ -20,7 +35,7 @@ from tabmcp.model import SpecError, Workbook, is_aggregate_formula, tableau_form
 def make_csv(d: Path) -> Path:
     random.seed(1)
     p = d / "sales.csv"
-    with open(p, "w", newline="") as fh:
+    with open(p, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["Order Date", "State", "Region", "Category", "Sales", "Profit", "Quantity"])
         for i in range(300):
@@ -101,6 +116,280 @@ def check_xml(root: ET.Element):
     assert all(w.get("hidden") == "true" for w in root.iter("window") if w.get("class") == "worksheet")
 
 
+# ---------------------------------------------------------------- Windows layer, simulated on any OS
+_MISSING = object()
+
+
+@contextlib.contextmanager
+def patched(obj, **attrs):
+    """Temporarily set attributes (creating missing ones) and restore them afterwards."""
+    old = {k: getattr(obj, k, _MISSING) for k in attrs}
+    for k, v in attrs.items():
+        setattr(obj, k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            if v is _MISSING:
+                delattr(obj, k)
+            else:
+                setattr(obj, k, v)
+
+
+@contextlib.contextmanager
+def patched_items(mapping, values: dict):
+    """Temporarily set (value) or remove (None) keys of a dict such as os.environ or sys.modules."""
+    old = {k: mapping.get(k, _MISSING) for k in values}
+    for k, v in values.items():
+        if v is None:
+            mapping.pop(k, None)
+        else:
+            mapping[k] = v
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            if v is _MISSING:
+                mapping.pop(k, None)
+            else:
+                mapping[k] = v
+
+
+def _forbid(*a, **k):
+    raise AssertionError(f"must not be called here: {a} {k}")
+
+
+def _done(cmd, out=""):
+    return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+
+def _touch(p: Path) -> Path:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"MZ")
+    return p
+
+
+TASKS = ('"tabpublic.exe","4242","Console","1","312,456 K"\r\n'
+         '"tab,public.exe","77","Console","1","1,024 K"\r\n')
+NO_TASKS = "INFO: No tasks are running which match the specified criteria.\r\n"
+
+
+def windows_checks(tmp: Path, csv_path: Path):
+    # tasklist parsing: quoted fields with commas, the INFO line (any language), empty output
+    assert V.parse_tasklist(TASKS) == [("tabpublic.exe", 4242), ("tab,public.exe", 77)]
+    assert V.parse_tasklist(NO_TASKS) == [] and V.parse_tasklist("") == []
+    runs = []
+    win_app = r"C:\Program Files\Tableau\Tableau Public 2026.2\bin\tabpublic.exe"
+    with patched(V, IS_WIN=True, APP_PATH=win_app), \
+            patched(subprocess, run=lambda cmd, **kw: runs.append((cmd, kw)) or _done(cmd, TASKS)):
+        inst = V.tableau_instances()
+        assert V.windows_of(4242) == []
+        try:
+            V._jxa("x")
+            raise AssertionError("osascript must be refused on Windows")
+        except RuntimeError:
+            pass
+    assert inst == [{"pid": 4242, "finished": True, "active": None}, {"pid": 77, "finished": True, "active": None}]
+    assert runs[0][0] == ["tasklist", "/FI", "IMAGENAME eq tabpublic.exe", "/FO", "CSV", "/NH"], runs
+    assert runs[0][1]["creationflags"] == 0x08000000 and len(runs) == 1      # CREATE_NO_WINDOW; no osascript ran
+
+    # app discovery on a fake Program Files tree, newest version first, x86 included, Desktop ignored
+    pf, x86 = tmp / "PF", tmp / "PF86"
+    _touch(pf / "Tableau" / "Tableau Public 2025.4" / "bin" / "tabpublic.exe")
+    newest = _touch(pf / "Tableau" / "Tableau Public 2026.2" / "bin" / "tabpublic.exe")
+    _touch(pf / "Tableau" / "Tableau Public 2027.1" / "bin" / "readme.txt")          # no exe: skipped
+    _touch(pf / "Tableau" / "Tableau 2027.1" / "bin" / "tableau.exe")                # Tableau Desktop: skipped
+    _touch(x86 / "Tableau" / "Tableau Public 2024.1" / "bin" / "tabpublic.exe")
+    env = {"ProgramFiles": str(pf), "ProgramFiles(x86)": str(x86)}
+    assert V.find_windows_app(env) == str(newest), V.find_windows_app(env)
+    ten = _touch(x86 / "Tableau" / "Tableau Public 2026.10" / "bin" / "tabpublic.exe")
+    assert V.find_windows_app(env) == str(ten)                                      # numeric, not string, order
+    alt = _touch(tmp / "PF2" / "Tableau" / "Tableau Public 2027.1" / "bin" / "tableau.exe")
+    assert V.find_windows_app({"ProgramFiles": str(tmp / "PF2")}) == str(alt)      # renamed-exe fallback
+    _touch(tmp / "PF3" / "Tableau" / "Tableau Public 2026.2" / "bin" / "tableaucrashreporter.exe")
+    assert V.find_windows_app({"ProgramFiles": str(tmp / "PF3")}) is None          # never a helper exe
+    assert V.find_windows_app({}) is None and V.find_windows_app({"ProgramFiles": str(tmp / "nope")}) is None
+    # module import under win32: IS_WIN, APP_PATH and LOG_DIR take the Windows branch
+    try:
+        with patched(sys, platform="win32"), patched_items(os.environ, {"ProgramFiles": str(pf), "ProgramW6432": None,
+                                                                         "ProgramFiles(x86)": None}):
+            importlib.reload(V)
+            assert V.IS_WIN and V.APP_PATH == str(newest), V.APP_PATH
+            assert V.LOG_DIR == V._documents_dir() / "My Tableau Repository" / "Logs"
+        with patched(sys, platform="win32"), patched_items(os.environ, {"ProgramFiles": str(tmp / "nope"),
+                                                                         "ProgramW6432": None, "ProgramFiles(x86)": None}):
+            importlib.reload(V)
+            assert V.APP_PATH == str(Path(str(tmp / "nope")) / "Tableau" / "Tableau Public" / "bin" / "tabpublic.exe")
+    finally:
+        importlib.reload(V)
+    assert not V.IS_WIN or sys.platform == "win32"
+
+    # app_build on Windows: folder version + exe file version; fallback kept
+    with patched(T, _exe_build=lambda exe: "20262.26.0912.1023"):
+        assert T._win_app_build(PureWindowsPath(win_app)) == "2026.2 (20262.26.0912.1023)"
+        assert T._win_app_build(PureWindowsPath(r"D:\Apps\Tableau Public\bin\tabpublic.exe")) == "2026.2 (20262.26.0912.1023)"
+    with patched(T, IS_WIN=True, _exe_build=lambda exe: None):
+        assert T.app_build() == T.FALLBACK_BUILD
+    assert T._exe_build(tmp / "missing.exe") is None          # unreadable: no crash (not win_app: it may exist on Windows)
+
+    # launch: tabpublic.exe <file>, detached; os.startfile when no exe; macOS 'open' command unchanged
+    exe, target = str(newest), r"C:\Users\Me\OneDrive\out\Sales__tv1a2b3c4d.twbx"
+    popens = []
+    with patched(V, IS_WIN=True, APP_PATH=exe), patched(subprocess, run=_forbid,
+                                                       Popen=lambda args, **kw: popens.append((args, kw))):
+        V.launch(target)
+        V.launch(target, "open-new")
+        try:
+            V.launch(target, "bogus")
+            raise AssertionError("unknown mode accepted")
+        except ValueError:
+            pass
+    args, kw = popens[0]
+    assert args == [exe, target] and popens[1][0] == args, popens
+    assert kw["creationflags"] == 0x00000008 | 0x00000200 and kw["close_fds"] is True     # DETACHED | NEW_GROUP
+    assert kw["stdin"] == kw["stdout"] == kw["stderr"] == subprocess.DEVNULL              # never the MCP stdio pipe
+    started = []
+    with patched(V, IS_WIN=True, APP_PATH=str(tmp / "missing.exe")), patched(subprocess, Popen=_forbid, run=_forbid), \
+            patched(os, startfile=started.append):
+        V.launch(target)
+    assert started == [target]
+    mac = []
+    with patched(V, IS_WIN=False, APP_PATH=str(tmp)), patched(subprocess, run=lambda cmd, **kw: mac.append(cmd)):
+        V.launch("/w/a.twbx")
+        V.launch("/w/a.twbx", "open-new")
+    assert mac == [["open", "-g", "-a", str(tmp), "/w/a.twbx"], ["open", "-n", "-g", "-a", str(tmp), "--args", "/w/a.twbx"]]
+
+    # quit_pid on Windows: graceful taskkill (no /F), polls tasklist, and os.kill never runs
+    def kill(*a):
+        raise AssertionError("os.kill on Windows terminates the process")
+    polls = [TASKS, NO_TASKS]
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return _done(cmd, "SUCCESS: Sent termination signal to the process with PID 4242.\r\n"
+                     if cmd[0] == "taskkill" else (polls.pop(0) if polls else NO_TASKS))
+    with patched(V, IS_WIN=True), patched(os, kill=kill), patched(subprocess, run=fake_run), \
+            patched(time, sleep=lambda s: None):
+        assert V.quit_pid(4242) is True                        # running, then gone after WM_CLOSE
+        poll = ["tasklist", "/FI", "PID eq 4242", "/FO", "CSV", "/NH"]
+        assert calls == [["taskkill", "/PID", "4242"], poll, poll], calls
+        assert V.quit_pid(9999) is True                        # not listed: already gone
+        with patched(V, _tasklist=lambda flt: V.parse_tasklist(TASKS)):
+            assert V.quit_pid(4242, timeout=0) is False        # still running: gives up, never forces
+    assert all("/F" not in c and "/f" not in c for c in calls), calls
+    # ...and macOS quit_pid still goes through JXA
+    jx = []
+    with patched(V, IS_WIN=False, _jxa=lambda *a, **k: jx.append(a) or "gone"):
+        assert V.quit_pid(1) is True
+        V.tableau_instances()
+    assert jx == [(V._JXA_TERMINATE, "1"), (V._JXA_INSTANCES, V.BUNDLE_ID)]
+    # static guard: every os.kill(...) call sits in a function whose first statement is `if IS_WIN: ... return`
+    for f in [*sorted((ROOT / "tabmcp").glob("*.py")), ROOT / "server.py", ROOT / "test_tableau_mcp.py"]:
+        tree = ast.parse(f.read_text(encoding="utf-8"))
+        is_kill = lambda n: (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "kill"
+                             and isinstance(n.func.value, ast.Name) and n.func.value.id == "os")
+        total = sum(map(is_kill, ast.walk(tree)))
+        guarded = 0
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef) and any(map(is_kill, ast.walk(fn))):
+                body = [s for s in fn.body if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))]
+                g = body[0]
+                assert (isinstance(g, ast.If) and isinstance(g.test, ast.Name) and g.test.id == "IS_WIN"
+                        and isinstance(g.body[-1], ast.Return)), f"{f.name}:{fn.name}: os.kill without an IS_WIN guard"
+                guarded += sum(map(is_kill, ast.walk(fn)))
+        assert total == guarded, f"{f.name}: os.kill outside a guarded function"
+
+    # Documents folder: the shell's answer (OneDrive redirect), else ~/Documents
+    with patched(V, IS_WIN=True):
+        if not hasattr(ctypes, "windll"):                                          # not on a real Windows
+            assert V._documents_dir() == Path.home() / "Documents"
+        def shget(hwnd, csidl, token, flags, buf):
+            assert csidl == 5 and flags == 0
+            buf.value = r"D:\OneDrive - Contoso\Documents"
+            return 0
+        with patched(ctypes, windll=types.SimpleNamespace(shell32=types.SimpleNamespace(SHGetFolderPathW=shget))):
+            assert str(V._documents_dir()) == r"D:\OneDrive - Contoso\Documents"
+            assert V._default_log_dir() == Path(r"D:\OneDrive - Contoso\Documents") / "My Tableau Repository" / "Logs"
+        fail = types.SimpleNamespace(SHGetFolderPathW=lambda *a: -2147467259)     # E_FAIL
+        with patched(ctypes, windll=types.SimpleNamespace(shell32=fail)):
+            assert V._documents_dir() == Path.home() / "Documents"
+    with patched(V, IS_WIN=False):
+        assert V._default_log_dir() == Path.home() / "Documents" / "My Tableau Repository" / "Logs"
+
+    # log tail on Windows opens with FILE_SHARE_READ|WRITE|DELETE so Tableau can still rename the slot
+    log = tmp / "log_1.txt"
+    log.write_text('{"k":"msg","pid":7,"v":"hi"}\r\n', encoding="utf-8")
+    opened = []
+
+    def create_file(path, access, share, sa, disposition, flags, template):
+        opened.append((access, share, disposition))
+        return os.open(path, os.O_RDONLY)
+    msvcrt = types.ModuleType("msvcrt")
+    msvcrt.open_osfhandle = lambda h, flags: h
+    with patched(V, IS_WIN=True), patched_items(sys.modules, {"msvcrt": msvcrt}), \
+            patched(ctypes, WinDLL=lambda name, use_last_error=False: types.SimpleNamespace(CreateFileW=create_file)):
+        with V._open_log(log) as fh:
+            assert fh.read().startswith(b'{"k"')
+        tail = V.LogDirTail(tmp, snap={})
+        assert [rec["v"] for _, rec in tail.poll()] == ["hi"]                      # CRLF lines parse
+        tail.close()
+    assert opened and all(o == (0x80000000, 0x7, 3) for o in opened), opened
+    with V._open_log(log) as fh:                                                   # macOS: plain open()
+        assert fh.read(1) == b"{"
+
+    # argv[1] on Windows: raw or escaped backslashes both give the real path; the copy's unique name matches
+    with patched(V, IS_WIN=True):
+        assert V.argv_path(r"C:\Users\Me\wb.twbx") == r"C:\Users\Me\wb.twbx"
+        assert V.argv_path(r"C:\\Users\\Me\\wb.twbx") == r"C:\Users\Me\wb.twbx"
+        cls = V.Classifier(V.Report())
+        cls.feed({"k": "msg", "pid": 5, "v": r'  argv[1]="C:\Users\Me\out\Sales__tv1a2b3c4d.twbx"'})
+        assert cls.r.argv1 == r"C:\Users\Me\out\Sales__tv1a2b3c4d.twbx"
+        copy = tmp / "Sales__tv1a2b3c4d.twbx"
+        assert V.is_target(cls.r.argv1, copy, True) and not V.is_target(cls.r.argv1, copy, False)
+        assert not V.is_target(r"C:\Users\Me\out\Other.twbx", copy, True)
+    with patched(V, IS_WIN=False):
+        assert V.argv_path(r'/Users/me/a \"b\".twbx') == '/Users/me/a "b".twbx'
+        assert not V.is_target(cls.r.argv1, copy, True)
+
+    # zip members always '/', whatever the input; unsafe names still refused
+    hy, cs = _touch(tmp / "payload" / "s.hyper"), _touch(tmp / "payload" / "sales.csv")
+    a = tmp / "a.twbx"
+    D.package_twbx(a, "a.twb", b"<workbook/>", [(PureWindowsPath(r"Data\s\s.hyper"), hy), (D.member("Data", "s", cs.name), cs)])
+    with patched(sys, platform="win32"):
+        b = tmp / "b.twbx"
+        D.package_twbx(b, "b.twb", b"<workbook/>", [(r"Data\s\s.hyper", hy), (str(PureWindowsPath("Data", "s", "sales.csv")), cs)])
+    for z, twb in ((a, "a.twb"), (b, "b.twb")):
+        with zipfile.ZipFile(z) as zf:
+            assert zf.namelist() == [twb, "Data/s/s.hyper", "Data/s/sales.csv"], zf.namelist()
+    posix_only = [] if sys.platform == "win32" else [r"Data\s\x.csv"]          # a legal filename char off Windows
+    for bad in ("/abs.csv", "Data/../x.csv", "C:/x.csv", PureWindowsPath(r"C:\x.csv"), PureWindowsPath(r"..\x.csv"), *posix_only):
+        try:
+            D.package_twbx(tmp / "bad.twbx", "bad.twb", b"<w/>", [(bad, cs)])
+            raise AssertionError(f"unsafe member accepted: {bad!r}")
+        except ValueError:
+            pass
+    with patched(sys, platform="win32"):
+        for bad in (r"..\x.csv", r"\abs.csv", r"C:\x.csv"):
+            try:
+                D.package_twbx(tmp / "bad.twbx", "bad.twb", b"<w/>", [(bad, cs)])
+                raise AssertionError(f"unsafe member accepted on Windows: {bad!r}")
+            except ValueError:
+                pass
+    # XML paths: a Windows CSV path (drive, spaces, backslashes) still gives Data/<id>/... with '/'
+    wb = Workbook(spec(csv_path))
+    wb.default_ds.csv = PureWindowsPath(r"C:\Users\Me\OneDrive\Data Files\sales.csv")
+    root = ET.fromstring(Compiler(wb).compile())
+    text = [c for c in root.iter("connection") if c.get("class") == "textscan"]
+    hyper = [c for c in root.iter("connection") if c.get("class") == "hyper"]
+    assert text and all(c.get("directory") == "Data/s" and c.get("filename") == "sales.csv" for c in text)
+    assert hyper and all(c.get("dbname") == "Data/s/s.hyper" for c in hyper)
+    assert not [v for el in root.iter() for v in el.attrib.values() if "C:\\" in v or "Data\\" in v]
+    # install.ps1 stays Windows PowerShell 5.1 syntax (no && / || pipeline chains)
+    ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
+    assert "$ErrorActionPreference = 'Stop'" in ps1 and not re.search(r"&&|\|\|", ps1)
+
+
 def main():
     # parsers
     assert _kind("1,234") == "integer" and _kind("1,234.5") == "real" and _kind("2025-03-01") == "date" and _kind("x") == "string"
@@ -136,6 +425,7 @@ def main():
         xml = Compiler(wb).compile()
         root = ET.fromstring(xml)
         check_xml(root)
+        windows_checks(Path(d), p)
     print("ok - all self-checks passed")
 
 

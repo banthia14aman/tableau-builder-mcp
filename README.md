@@ -1,6 +1,6 @@
 # tableau-builder
 
-> **Free for students and personal use.** Clone this repo and run `install.sh`: coursework, case competitions, research and hobby projects are all covered ([LICENSE](LICENSE): PolyForm Noncommercial 1.0.0 plus a student grant). **Commercial use** (at work, for paid client work, or in a product) needs a licence: **[Tableau Builder MCP on Agensi: $7.99](https://agensi.io/skills/tableau-builder-mcp)**, which also gives a one-click install. The companion [tableau-dashboard skill](https://agensi.io/skills/tableau-dashboard-builder) is free.
+> **Free for students and personal use.** Clone this repo and run `install.sh` (macOS) or `install.ps1` (Windows, experimental): coursework, case competitions, research and hobby projects are all covered ([LICENSE](LICENSE): PolyForm Noncommercial 1.0.0 plus a student grant). **Commercial use** (at work, for paid client work, or in a product) needs a licence: **[Tableau Builder MCP on Agensi: $7.99](https://agensi.io/skills/tableau-builder-mcp)**, which also gives a one-click install. The companion [tableau-dashboard skill](https://agensi.io/skills/tableau-dashboard-builder) is free.
 
 **Let an AI agent build real Tableau dashboards.** tableau-builder is an MCP server plus a Claude Code skill. It turns a compact JSON spec into a Tableau workbook (`.twbx`, Hyper extracts packaged, ready for Tableau Public), opens it in Tableau, and **verifies the load by reading Tableau's own logs**. The agent knows the workbook works before you ever see it.
 
@@ -13,15 +13,22 @@
 
 ## Get it
 
-**Students and personal use (free):** paste this repo's link into Claude Code and ask it to set it up, or run it yourself:
+**Students and personal use (free):** paste this repo's link into Claude Code and ask it to set it up, or run it yourself.
+
+macOS:
 ```bash
 git clone https://github.com/banthia14aman/tableau-builder-mcp ~/tableau-builder && ~/tableau-builder/install.sh
 ```
 
-**Commercial use:** buy the licence on [Agensi](https://agensi.io/skills/tableau-builder-mcp) ($7.99 one-time). Your agent then writes the package to `~/tableau-builder` and runs `install.sh`.
+Windows (EXPERIMENTAL), in PowerShell (needs [Git](https://git-scm.com/download/win)):
+```powershell
+git clone https://github.com/banthia14aman/tableau-builder-mcp $HOME\tableau-builder; cd $HOME\tableau-builder; powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+**Commercial use:** buy the licence on [Agensi](https://agensi.io/skills/tableau-builder-mcp) ($7.99 one-time). Your agent then writes the package to `~/tableau-builder` and runs `install.sh` (`install.ps1` on Windows).
 
 The installer:
-1. checks macOS, uv and Tableau Public;
+1. checks the platform, uv (installing it if missing) and Tableau Public;
 2. runs the self-test;
 3. registers the MCP server;
 4. installs the skill.
@@ -31,7 +38,8 @@ Restart Claude Code, then ask:
 > Build a Tableau dashboard from ~/Downloads/sales.csv that shows where profit comes from
 
 **Requirements:**
-- macOS with [Tableau Public](https://public.tableau.com) (free) for opening and validating. Building `.twbx` files works on any OS.
+- [Tableau Public](https://public.tableau.com) (free) on macOS for opening and validating. Building `.twbx` files works on any OS.
+- Windows is supported, but live validation there is EXPERIMENTAL: it was written from documented Windows behaviour and tested by simulation, and has not yet been confirmed on a Windows machine. Building works the same as on macOS.
 - Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 **Dependencies:** `mcp` (<2) and `tableauhyperapi`, both resolved automatically.
@@ -74,7 +82,7 @@ Field references are written like Tableau pills: `SUM(Sales)`, `YEAR(Order Date)
 Tableau has no automation API, so tableau-builder works through files and logs:
 
 1. It **writes** the workbook exactly the way Tableau would.
-2. It **opens** it with `open -a "Tableau Public"`.
+2. It **opens** it with `open -a "Tableau Public"` (on Windows: `tabpublic.exe <file>`, experimental).
 3. It **reads** Tableau's JSON-lines log for that workbook's process.
 
 There it finds the load result, invalid-field warnings, error dialogs and which sheets computed. Class and sequence diagrams are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -97,10 +105,13 @@ It also carries design rules distilled from real reviewer feedback (one message 
 ```bash
 python3 test_tableau_mcp.py     # stdlib-only self-check: parsers + full compile + cross-reference checks
 ```
+On Windows run `uv run --no-project python test_tableau_mcp.py`. The self-test also simulates the Windows layer (tasklist parsing, app discovery, launch, quit, Documents folder, zip paths) on any OS.
 Live load-testing uses `open_in_tableau` (needs Tableau Public).
 
 ## Limitations
-- `open_in_tableau` is macOS-only: it reads the logs under `~/Documents/My Tableau Repository`.
+- `open_in_tableau` is load-tested on macOS only: it reads the logs under `~/Documents/My Tableau Repository`.
+- On Windows `open_in_tableau` is EXPERIMENTAL. It assumes that Tableau Public lives at `Program Files\Tableau\Tableau Public <version>\bin\tabpublic.exe`, writes the same JSON-lines logs to `My Tableau Repository\Logs` in your Documents folder (OneDrive-redirected Documents are found), starts one process per workbook, and closes on a polite `taskkill` (never `/F`). If you try it, please report what happened in an issue.
+- Windows on ARM: `tableauhyperapi` publishes `win_amd64` wheels only, so the server needs an x64 Python (run under emulation); a native ARM64 Python cannot install it.
 - Not modelled yet: dual axes, reference lines, stories, sets and groups, manual sort orders, URL and parameter actions. Use `patch_workbook`, guided by `diff_workbooks`.
 - Data sources are CSV files: one table each, no joins or blending. Prepare and join the data in Python first; the skill tells the agent to.
 - Publishing to Tableau Public is left to you (File → Save to Tableau Public).

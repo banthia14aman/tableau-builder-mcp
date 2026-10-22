@@ -40,7 +40,7 @@ def _spec(spec):
 def spec_reference() -> str:
     """Return the full workbook spec reference (fields, marks, filters, parameters, dashboards, actions)
     with examples and the design rules. Read this before writing your first spec in a session."""
-    return SPEC_DOC.read_text()
+    return SPEC_DOC.read_text(encoding="utf-8")
 
 
 @mcp.tool()
@@ -68,7 +68,7 @@ def build_workbook(spec: dict | str) -> dict:
 def open_in_tableau(path: str, keep_open: bool = True) -> dict:
     """Open a .twb/.twbx in Tableau Public (a uniquely named copy) and read Tableau's own log to verify the
     load: ok=true only if the workbook loaded, no error dialog, no invalid calculations, and every sheet on
-    the opening dashboard computed. Takes ~3-5 s. Needs Tableau Public installed (macOS)."""
+    the opening dashboard computed. Takes ~3-5 s. Needs Tableau Public installed (macOS; Windows is experimental)."""
     return _safe(tools.open_in_tableau, path, keep_open)
 
 
@@ -97,8 +97,16 @@ def diff_workbooks(a: str, b: str) -> dict:
 
 
 if __name__ == "__main__":
-    if "--check" in sys.argv:          # used by install.sh: proves deps resolve, then exits
+    if "--check" in sys.argv:          # used by install.sh / install.ps1: proves deps resolve, then exits
         import tableauhyperapi  # noqa: F401
+        from tabmcp.validate import IS_WIN, LOG_DIR
+
+        if IS_WIN:                     # a piped Windows stdout is cp1252: never fail on a non-Latin user name
+            sys.stdout.reconfigure(errors="backslashreplace")
         print("tableau-builder ok:", len(mcp._tool_manager.list_tools()), "tools; Tableau app:", tools.APP if tools.APP.exists() else "not found")
+        plat = {"darwin": "macOS", "win32": "Windows (live validation EXPERIMENTAL)"}.get(sys.platform, "unsupported for live validation")
+        print(f"  platform: {sys.platform} ({plat})")
+        print(f"  app path: {tools.APP} ({'found' if tools.APP.exists() else 'not found'})")
+        print(f"  log dir:  {LOG_DIR} ({'found' if LOG_DIR.is_dir() else 'not found yet: Tableau creates it on first launch'})")
         sys.exit(0)
     mcp.run()

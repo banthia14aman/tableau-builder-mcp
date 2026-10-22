@@ -1,4 +1,10 @@
-"""Headless load validation for Tableau Public (macOS) via its JSON-lines logs.
+"""Headless load validation for Tableau Public (macOS; Windows EXPERIMENTAL) via its JSON-lines logs.
+
+Windows support (IS_WIN) is written from documented Windows behaviour and unit-tested on macOS by
+simulation only; it has never run on a Windows machine. It assumes Tableau Public for Windows writes the
+same JSON-lines logs to <Documents>/My Tableau Repository/Logs, lives at
+%ProgramFiles%/Tableau/Tableau Public <version>/bin/tabpublic.exe (the layout public process databases
+show for 7.0 to 2022.2) and starts one process per workbook that logs argv[1]. See the _win helpers.
 
 Load-tested end to end against Tableau Public 2026.2.3: good workbooks report loaded=True with every
 dashboard sheet computed (~3 s); schema-rejected workbooks surface the load-error dialog.
@@ -38,11 +44,15 @@ were never run, because the research brief forbade opening or closing Tableau.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+import ntpath
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -50,8 +60,72 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-LOG_DIR = Path.home() / "Documents" / "My Tableau Repository" / "Logs"
-APP_PATH = next((str(p) for p in sorted(Path("/Applications").glob("Tableau Public*.app"), reverse=True)), "/Applications/Tableau Public.app")
+IS_WIN = sys.platform == "win32"
+
+
+# ------------------------------------------------------------------ Windows discovery (EXPERIMENTAL)
+def _documents_dir() -> Path:
+    """The user's real Documents folder on Windows. OneDrive's folder backup and roaming-profile folder
+    redirection move it (e.g. to C:/Users/me/OneDrive/Documents), so ask the shell for CSIDL_PERSONAL (5)
+    instead of assuming ~/Documents. Falls back to Path.home()/"Documents" if the call is unavailable or fails."""
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)                                  # MAX_PATH, as the API requires
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0 and buf.value:  # 0 = S_OK
+            return Path(buf.value)
+    except Exception:  # noqa: BLE001  (no windll off Windows; any shell failure)
+        pass
+    return Path.home() / "Documents"
+
+
+def _default_log_dir() -> Path:
+    if not IS_WIN:
+        return Path.home() / "Documents" / "My Tableau Repository" / "Logs"
+    return _documents_dir() / "My Tableau Repository" / "Logs"
+
+
+def _version_key(name: str) -> tuple[int, ...]:
+    m = re.search(r"(\d+(?:\.\d+)*)\s*$", name)
+    return tuple(int(x) for x in m[1].split(".")) if m else ()
+
+
+WIN_EXE_NAMES = ("tabpublic.exe", "tableaupublic.exe", "tableau.exe")   # in order of preference
+
+
+def find_windows_app(env: dict | None = None) -> str | None:
+    """Newest Tableau Public for Windows: <Program Files>/Tableau/Tableau Public <version>/bin/tabpublic.exe,
+    searching %ProgramFiles%, %ProgramW6432% and %ProgramFiles(x86)%. tabpublic.exe is the name public process
+    databases list for every version from 7.0 to 2022.2 (no Tableau document names it). In case a later version
+    renamed it, tableaupublic.exe or tableau.exe in the same bin folder is accepted too: UNVERIFIED. Nothing
+    broader (no tableau*.exe glob): bin/ also holds helper executables (crash reporter and the like), and
+    launching one of them with our workbook would be wrong. Without a known name, launch() uses the .twbx
+    file association (os.startfile) instead."""
+    env = os.environ if env is None else env
+    roots: list[str] = []
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        v = env.get(var)
+        if v and v not in roots:
+            roots.append(v)
+    found = []
+    for root in roots:
+        for d in Path(root, "Tableau").glob("Tableau Public*"):
+            b = d / "bin"
+            exe = next((p for p in (b / n for n in WIN_EXE_NAMES) if p.is_file()), None)
+            if exe is not None:
+                found.append((_version_key(d.name), str(exe)))
+    found.sort(key=lambda t: t[0], reverse=True)                     # newest version first; stable for ties
+    return found[0][1] if found else None
+
+
+def _default_app_path() -> str:
+    if not IS_WIN:
+        return next((str(p) for p in sorted(Path("/Applications").glob("Tableau Public*.app"), reverse=True)), "/Applications/Tableau Public.app")
+    return find_windows_app() or str(Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+                                     / "Tableau" / "Tableau Public" / "bin" / "tabpublic.exe")
+
+
+LOG_DIR = _default_log_dir()
+APP_PATH = _default_app_path()
 BUNDLE_ID = "com.tableausoftware.tableaupublic"
 SLOT_RE = re.compile(r"^log(?:_(\d+))?\.txt$")  # live slots only
 ANY_LOG_RE = re.compile(r"^log(?:_\d+)?(?:_bk)?\.txt$")  # live + previous-run files
@@ -96,6 +170,19 @@ def vtext(rec: dict) -> str:
 
 def unescape(s: str) -> str:
     return re.sub(r"\\(.)", r"\1", s)
+
+
+_LONE_BACKSLASH = re.compile(r'(?<!\\)\\(?![\\"])')
+
+
+def argv_path(raw: str) -> str:
+    """The path inside the argv[1]="..." log message. macOS: Tableau escapes it C-style, so unescape.
+    Windows (UNVERIFIED): a path is full of backslashes and it is not known whether Tableau escapes them.
+    A backslash that is neither doubled nor before a quote means the path was logged as is (C:\\Users\\x
+    unescaped has single ones), so it is kept; unescaping it would delete every separator."""
+    if IS_WIN and _LONE_BACKSLASH.search(raw):
+        return raw
+    return unescape(raw)
 
 
 def same_file(a: str, b: str) -> bool:
@@ -235,7 +322,7 @@ class Classifier:
 
         if k == "msg" and isinstance(v, str):
             if self._n <= 40 and r.argv1 is None and (m := RE_ARGV1.match(v)):
-                r.argv1 = unescape(m["path"])
+                r.argv1 = argv_path(m["path"])
             elif m := RE_FILEOPEN.match(v):
                 r.fileopen_paths.append(m["path"])
             elif m := RE_RENDER.match(v):
@@ -328,6 +415,28 @@ class Classifier:
 
 
 # ------------------------------------------------------------------ log directory tailer
+_GENERIC_READ, _SHARE_READ_WRITE_DELETE, _OPEN_EXISTING, _ATTR_NORMAL = 0x80000000, 0x7, 3, 0x80
+
+
+def _open_log(p: Path):
+    """Open a log for binary reading. Windows: Python's open() does not pass FILE_SHARE_DELETE, so while we
+    held a file Tableau could not rename log.txt to log_bk.txt when a new process takes the slot. Open it with
+    CreateFileW and FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE instead, so renames work as on
+    macOS and the handle follows the file (UNVERIFIED on Windows; assumes Tableau shares its log for reading)."""
+    if not IS_WIN:
+        return open(p, "rb")
+    import ctypes
+    import msvcrt
+    create = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create.restype = ctypes.c_void_p
+    create.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                       ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p)
+    h = create(str(p), _GENERIC_READ, _SHARE_READ_WRITE_DELETE, None, _OPEN_EXISTING, _ATTR_NORMAL, None)
+    if h is None or h == ctypes.c_void_p(-1).value:                       # INVALID_HANDLE_VALUE
+        raise OSError(ctypes.get_last_error(), "CreateFileW failed", str(p))
+    return os.fdopen(msvcrt.open_osfhandle(h, os.O_RDONLY | getattr(os, "O_BINARY", 0)), "rb")
+
+
 def snapshot(log_dir: Path = LOG_DIR) -> dict[int, int]:
     """inode -> size for every live slot (log.txt, log_<N>.txt)."""
     out = {}
@@ -364,7 +473,7 @@ class LogDirTail:
                 ino = p.stat().st_ino
                 if ino in self.handles:
                     continue
-                fh = open(p, "rb")
+                fh = _open_log(p)
             except OSError:
                 continue
             st = os.fstat(fh.fileno())
@@ -434,6 +543,8 @@ function run(argv) {
 
 
 def _jxa(script: str, *args: str, timeout: float = 10.0):
+    if IS_WIN:
+        raise RuntimeError("osascript (JXA) is macOS-only")
     p = subprocess.run(["osascript", "-l", "JavaScript", "-", *args], input=script,
                        capture_output=True, text=True, timeout=timeout)
     if p.returncode != 0:
@@ -444,12 +555,82 @@ def _jxa(script: str, *args: str, timeout: float = 10.0):
 
 def windows_of(pid: int) -> list[dict]:
     """On-screen windows of one process. Works without Screen Recording, but then every
-    title is null (checked on Safari: layer and bounds are present, kCGWindowName is not)."""
+    title is null (checked on Safari: layer and bounds are present, kCGWindowName is not).
+    Windows: returns [] (no probe). Listing another process's windows needs EnumWindows through
+    ctypes, and the result only feeds the informational Report.windows, which nothing decides on."""
+    if IS_WIN:
+        return []
     return _jxa(_JXA_WINDOWS, str(pid))
 
 
+# ------------------------------------------------------------------ Windows helpers (EXPERIMENTAL)
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)      # no console flash from a GUI-less server
+_DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+_NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+
+
+def parse_tasklist(out: str) -> list[tuple[str, int]]:
+    """(image name, pid) rows from `tasklist /FO CSV /NH` output. Any line whose second field is not a
+    number is skipped: that covers "INFO: No tasks are running which match the specified criteria." and its
+    translations on non-English Windows. The csv module handles quoted fields with commas ("12,345 K")."""
+    rows = []
+    for row in csv.reader(io.StringIO(out)):
+        if len(row) >= 2 and row[1].strip().isdigit():
+            rows.append((row[0].strip(), int(row[1])))
+    return rows
+
+
+def _tasklist(flt: str) -> list[tuple[str, int]]:
+    p = subprocess.run(["tasklist", "/FI", flt, "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                       errors="replace", timeout=15, creationflags=_NO_WINDOW)
+    return parse_tasklist(p.stdout)
+
+
+def _win_image() -> str:
+    return ntpath.basename(APP_PATH) if APP_PATH.lower().endswith(".exe") else "tabpublic.exe"
+
+
+def _win_pid_alive(pid: int) -> bool:
+    """Never os.kill(pid, 0) on Windows: there it calls TerminateProcess and kills the process."""
+    return any(p == pid for _, p in _tasklist(f"PID eq {pid}"))
+
+
+def _win_quit_pid(pid: int, timeout: float) -> bool:
+    """`taskkill /PID <pid>` WITHOUT /F posts WM_CLOSE to the process's windows: the same polite close as
+    clicking X (UNVERIFIED for Tableau: an unmodified workbook should close, a modified one should prompt).
+    Then poll tasklist until the pid is gone. Nothing is force-killed."""
+    subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True, text=True, errors="replace",
+                   timeout=15, creationflags=_NO_WINDOW)
+    end = time.monotonic() + timeout
+    while True:
+        if not _win_pid_alive(pid):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.5)
+
+
+def _win_launch(target: str, mode: str) -> None:
+    """Start tabpublic.exe with the workbook as argv[1], detached from the server (no console, own process
+    group, no inherited handles: stdout is the MCP stdio channel). Without a found exe, fall back to the file
+    association (os.startfile, ShellExecute "open"). Assumed (UNVERIFIED): every launch is a new Tableau
+    process that logs argv[1], so "open" and "open-new" behave the same. There is no background (-g) equivalent."""
+    if mode not in ("open", "open-new"):
+        raise ValueError(mode)
+    if os.path.isfile(APP_PATH):
+        subprocess.Popen([APP_PATH, target], creationflags=_DETACHED | _NEW_GROUP, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         cwd=os.path.dirname(APP_PATH))
+    else:
+        os.startfile(target)  # type: ignore[attr-defined]  # Windows-only
+
+
 def tableau_instances() -> list[dict]:
-    """Running Tableau Public processes (one per workbook). Needs no permission."""
+    """Running Tableau Public processes (one per workbook). Needs no permission.
+    Windows: from tasklist, with finished=True (the process exists) and active=None (not known)."""
+    if IS_WIN:
+        return [{"pid": pid, "finished": True, "active": None}
+                for _, pid in _tasklist(f"IMAGENAME eq {_win_image()}")]
     return _jxa(_JXA_INSTANCES, BUNDLE_ID)
 
 
@@ -458,7 +639,10 @@ def quit_pid(pid: int, timeout: float = 20.0) -> bool:
     pyobjc is needed). UNVERIFIED for Tableau. Logs show that an unmodified workbook closes
     with no prompt: handle-close takes 0.02-0.06 s, then the process exits about 3 s later.
     A modified workbook brings up the Tableau Public sign-in/save flow (log.txt 18:51:11),
-    so never interact with the window before quitting. Nothing is force-killed."""
+    so never interact with the window before quitting. Nothing is force-killed.
+    Windows: taskkill without /F, see _win_quit_pid (os.kill must never run there)."""
+    if IS_WIN:
+        return _win_quit_pid(pid, timeout)
     if _jxa(_JXA_TERMINATE, str(pid)) == "gone":
         return True
     end = time.monotonic() + timeout
@@ -472,6 +656,8 @@ def quit_pid(pid: int, timeout: float = 20.0) -> bool:
 
 
 def launch(target: str, mode: str = "open", background: bool = True) -> None:
+    if IS_WIN:
+        return _win_launch(target, mode)
     app = ["-a", APP_PATH] if os.path.isdir(APP_PATH) else ["-b", BUNDLE_ID]
     bg = ["-g"] if background else []
     if mode == "open":        # observed: the running instance spawns a child with argv[1]
@@ -481,6 +667,14 @@ def launch(target: str, mode: str = "open", background: bool = True) -> None:
     else:
         raise ValueError(mode)
     subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+
+
+def is_target(argv1: str, path: Path, unique: bool) -> bool:
+    """Did the process with this argv[1] open `path`? Windows (UNVERIFIED): Tableau may log argv[1] in another
+    form (escaped, \\\\?\\ prefix), so when `path` is our uniquely named copy, a name match at the end is enough."""
+    if same_file(argv1, str(path)):
+        return True
+    return IS_WIN and unique and argv1.lower().endswith(path.name.lower())
 
 
 def unique_copy(path: Path) -> Path:
@@ -503,7 +697,7 @@ def validate(target: str | Path, *, copy: bool = True, quit_after: bool = True,
     exp.stem = path.stem
     tail = LogDirTail(log_dir)                    # 1. record inode+size of every live slot
     t0 = time.monotonic()
-    launch(str(path), mode)                       # 2. open -a
+    launch(str(path), mode)                       # 2. open -a (Windows: tabpublic.exe <file>)
     states: dict[int, Classifier] = {}
     tpid: int | None = None
     last = dialog_at = loaded_at = None
@@ -520,7 +714,7 @@ def validate(target: str | Path, *, copy: bool = True, quit_after: bool = True,
                 cls.feed(rec)
                 if tpid is None:
                     r = cls.r
-                    if r.argv1 and same_file(r.argv1, str(path)):
+                    if r.argv1 and is_target(r.argv1, path, copy):
                         tpid, r.via = pid, "child"
                     elif rec.get("k") in ("load-workbook", "end-workspace.open-workbook") \
                             and (rec.get("ctx") or {}).get("wb") == exp.stem \

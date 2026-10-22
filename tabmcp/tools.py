@@ -10,21 +10,60 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .compile import Compiler
-from .data import build_hyper, package_twbx, profile_csv, read_header, read_twb_bytes, safe_base, wide_hint, write_twb_bytes
+from .data import build_hyper, member, package_twbx, profile_csv, read_header, read_twb_bytes, safe_base, wide_hint, write_twb_bytes
 from .model import SpecError, Workbook
 
-from .validate import APP_PATH
+from .validate import APP_PATH, IS_WIN
 APP = Path(APP_PATH)
+FALLBACK_BUILD = "2026.2.3 (20262.26.0912.1023)"
+_FOLDER_VERSION = re.compile(r"Tableau Public (\d{4}\.\d+(?:\.\d+)*)", re.I)
+
+
+def _exe_build(exe: Path) -> str | None:
+    """Windows: the exe's file version from its VS_FIXEDFILEINFO (version.dll, stdlib ctypes), formatted the
+    way Tableau writes builds: 20262.26.0912.1023. Public process databases show tabpublic.exe stamped this
+    way (e.g. 20222.22.0916.1526 for 2022.2). None if it cannot be read."""
+    try:
+        import ctypes
+        ver = ctypes.windll.version
+        n = ver.GetFileVersionInfoSizeW(str(exe), None)
+        buf = ctypes.create_string_buffer(n) if n else None
+        if not n or not ver.GetFileVersionInfoW(str(exe), 0, n, buf):
+            return None
+        ptr, size = ctypes.c_void_p(), ctypes.c_uint()
+        if not ver.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(size)) or size.value < 16:
+            return None
+        sig, _, ms, ls = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_uint32 * 4)).contents
+        if sig != 0xFEEF04BD:
+            return None
+        return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16:04d}.{ls & 0xFFFF:04d}"
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _win_app_build(app: Path) -> str | None:
+    """'2026.2 (20262.26.0912.1023)': the version from the install folder name ('Tableau Public 2026.2'), or
+    from the build's first number (20262 -> 2026.2), plus the exe's file version. None without a build."""
+    build = _exe_build(app)
+    if not build:
+        return None
+    short = next((m[1] for p in reversed(app.parts) if (m := _FOLDER_VERSION.fullmatch(p))), None)
+    head = build.split(".")[0]
+    if short is None and len(head) > 4 and head.isdigit():
+        short = f"{head[:4]}.{head[4:]}"
+    return f"{short} ({build})" if short else None
 
 
 def app_build() -> str:
+    if IS_WIN:
+        return _win_app_build(APP) or FALLBACK_BUILD
     try:
         plist = APP / "Contents" / "Info.plist"
         get = lambda k: subprocess.run(["/usr/libexec/PlistBuddy", "-c", f"Print :{k}", str(plist)],
                                        capture_output=True, text=True, timeout=5).stdout.strip()
         return f"{get('CFBundleShortVersionString')} ({get('CFBundleVersion')})"
     except Exception:  # noqa: BLE001
-        return "2026.2.3 (20262.26.0912.1023)"
+        return FALLBACK_BUILD
 
 
 # ---------------------------------------------------------------- profile
@@ -80,7 +119,7 @@ def build_workbook(spec: dict) -> dict:
         csv_copy = d / ds.csv.name
         if csv_copy.resolve() != ds.csv.resolve():
             shutil.copyfile(ds.csv, csv_copy)
-        payloads += [(f"Data/{ds.id}/{hy.name}", hy), (f"Data/{ds.id}/{ds.csv.name}", csv_copy)]
+        payloads += [(member("Data", ds.id, hy.name), hy), (member("Data", ds.id, ds.csv.name), csv_copy)]
         extracts[ds.id] = info
     twb = out / f"{base}.twb"
     twb.write_bytes(xml)

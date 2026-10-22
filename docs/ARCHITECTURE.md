@@ -3,7 +3,7 @@
 tableau-builder talks to Tableau **through files, not an API**: Tableau Desktop/Public exposes no automation API, AppleScript dictionary or public headers. The server therefore:
 
 1. **Writes** the workbook exactly as Tableau would: `.twb` XML plus Hyper extracts, zipped into a `.twbx`.
-2. **Opens** it with macOS `open -a "Tableau Public"`, which starts one Tableau process per workbook.
+2. **Opens** it with macOS `open -a "Tableau Public"`, which starts one Tableau process per workbook. On Windows (EXPERIMENTAL) it starts `tabpublic.exe <file>` instead, or uses the file association when the exe is not found.
 3. **Reads Tableau's own JSON-lines log** (`~/Documents/My Tableau Repository/Logs/log_N.txt`) to learn whether the load succeeded. That log records schema rejections (as an error dialog), invalid calculations (`InvalidField`) and which sheets computed.
 
 ## Class diagram
